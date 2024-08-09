@@ -25,22 +25,36 @@ namespace SonarAnalyzer.Rules
     {
         internal const string DiagnosticId = "S3431";
 
-        protected abstract bool HasMultiLineBody(SyntaxNode syntax);
+        protected abstract SyntaxNode FindExpectedExceptionAttribute(SyntaxNode node);
+        protected abstract bool HasMultiLineBody(SyntaxNode node);
+        protected abstract bool AssertInCatchFinallyBlock(SyntaxNode node);
 
         protected override string MessageFormat => "Replace the 'ExpectedException' attribute with a throw assertion or a try/catch block.";
 
         protected ExpectedExceptionAttributeShouldNotBeUsedBase() : base(DiagnosticId) { }
 
         protected override void Initialize(SonarAnalysisContext context) =>
-            context.RegisterNodeAction(Language.GeneratedCodeRecognizer, c =>
+            context.RegisterCompilationStartAction(c =>
             {
-                if (HasMultiLineBody(c.Node)
-                    && c.SemanticModel.GetDeclaredSymbol(c.Node) is { } methodSymbol
-                    && methodSymbol.GetAttributes(UnitTestHelper.KnownExpectedExceptionAttributes).FirstOrDefault() is { } attribute)
+                if (!ContainExpectedExceptionType(c.Compilation))
                 {
-                    c.ReportIssue(Rule, attribute.ApplicationSyntaxReference.GetSyntax());
+                    return;
                 }
-            },
-            Language.SyntaxKind.MethodDeclarations);
+
+                c.RegisterNodeAction(Language.GeneratedCodeRecognizer, cc =>
+                    {
+                        if (FindExpectedExceptionAttribute(cc.Node) is {} attribute
+                            && HasMultiLineBody(cc.Node)
+                            && !AssertInCatchFinallyBlock(cc.Node))
+                        {
+                            cc.ReportIssue(Rule, attribute);
+                        }
+                    },
+                    Language.SyntaxKind.MethodDeclarations);
+            });
+
+        private static bool ContainExpectedExceptionType(Compilation compilation) =>
+            compilation.GetTypeByMetadataName(KnownType.Microsoft_VisualStudio_TestTools_UnitTesting_ExpectedExceptionAttribute) is not null
+            || compilation.GetTypeByMetadataName(KnownType.NUnit_Framework_ExpectedExceptionAttribute) is not null;
     }
 }
